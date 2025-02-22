@@ -14,7 +14,7 @@ const SignUp = () => {
     const email = form.email.value;
     const password = form.password.value;
     createUser(email, password).then((result) => {
-        console.log(result.user);
+        // console.log(result.user);
         updateUser(name).then(() => {
           const userInfo = {
             name: name,
@@ -32,7 +32,7 @@ const SignUp = () => {
     };
   const handleClick = () => {
     googleSignIn().then((result) => {
-      console.log(result.user);
+      // console.log(result.user);
       Swal.fire({
         position: "top-end",
         icon: "success",

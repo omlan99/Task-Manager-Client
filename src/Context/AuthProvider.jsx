@@ -38,17 +38,17 @@ import axios from "axios";
   
     useEffect(() => {
       const unsubscribe = onAuthStateChanged(auth, async (loggedUser) => {
-        try {
+        // try {
           setUser(loggedUser);
-          // Optionally, sync with your backend if loggedUser exists
-          if (loggedUser) {
-            // ... your logic here ...
-          }
-        } catch (error) {
-          console.error(error);
-        } finally {
+        //   // Optionally, sync with your backend if loggedUser exists
+        //   if (loggedUser) {
+        //     // ... your logic here ...
+        //   }
+        // } catch (error) {
+        //   console.error(error);
+        // } finally {
           setLoader(false);
-        }
+        // }
       });
       return () => {
         unsubscribe();

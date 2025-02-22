@@ -5,7 +5,7 @@ import { Link, useNavigate } from "react-router-dom";
 
 const Navbar = () => {
   const { user, signOutUser } = useContext(AuthContext);
-  console.log(user)
+  // console.log(user)
   const navigate = useNavigate()
   const handleLogOut = () => {
     signOutUser()

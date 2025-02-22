@@ -18,7 +18,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import useAxios from '../Hooks/useAxios';
 
-// DroppableContainer: now passes data: { droppableId } so that even empty columns can be identified
+// Droppable container for each column
 function DroppableContainer({ droppableId, children }) {
   const { setNodeRef } = useDroppable({ id: droppableId, data: { droppableId } });
   return (
@@ -28,7 +28,7 @@ function DroppableContainer({ droppableId, children }) {
   );
 }
 
-// TaskCard: memoized to prevent unnecessary re-renders
+// Draggable Task Card component
 const TaskCard = React.memo(function TaskCard({ task, onDelete }) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: task._id });
   const style = {
@@ -58,30 +58,35 @@ const TaskCard = React.memo(function TaskCard({ task, onDelete }) {
 const Board = () => {
   const { user } = useContext(AuthContext);
   const { getTasks, createTask, updateTask, deleteTask } = useAxios();
-  const socket = io('http://localhost:3000'); // Adjust URL as needed
+  
+  // Initialize socket once
+  const socketRef = useState(() => io('http://localhost:3000'))[0];
 
-  // Define three default columns by category
+  // Three default columns by category
   const [lists, setLists] = useState([
     { id: 'list-1', title: "To-Do", cards: [] },
     { id: 'list-2', title: "In Progress", cards: [] },
     { id: 'list-3', title: "Done", cards: [] }
   ]);
 
-  // State for adding new tasks (only for To-Do column)
+  // State for adding tasks (only available for "To-Do" column)
   const [activeTaskList, setActiveTaskList] = useState(null);
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [newTaskDescription, setNewTaskDescription] = useState("");
-
+  
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
   );
 
-  // Fetch tasks on mount and group them by category (filtered by user.email)
+  // Wait for user to be loaded; show a loading indicator if not available
+  if (!user || !user.email) {
+    return <div className="p-4 text-center">Loading...</div>;
+  }
+
+  // Fetch tasks for the logged-in user
   useEffect(() => {
     const fetchData = async () => {
-      if (!user || !user.email) return;
       try {
-        // Append email query parameter so the backend returns only this user's tasks
         const tasks = await getTasks(`?email=${encodeURIComponent(user.email)}`);
         const grouped = { "To-Do": [], "In Progress": [], "Done": [] };
         tasks.forEach(task => {
@@ -104,7 +109,7 @@ const Board = () => {
 
   // Listen for real-time updates via Socket.IO
   useEffect(() => {
-    socket.on("taskAdded", (task) => {
+    socketRef.on("taskAdded", (task) => {
       setLists(prevLists =>
         prevLists.map(list =>
           list.title === task.category && !list.cards.some(c => c._id === task._id)
@@ -113,7 +118,7 @@ const Board = () => {
         )
       );
     });
-    socket.on("taskUpdated", (updatedTask) => {
+    socketRef.on("taskUpdated", (updatedTask) => {
       setLists(prevLists =>
         prevLists.map(list => ({
           ...list,
@@ -123,7 +128,7 @@ const Board = () => {
         }))
       );
     });
-    socket.on("taskDeleted", (id) => {
+    socketRef.on("taskDeleted", (id) => {
       setLists(prevLists =>
         prevLists.map(list => ({
           ...list,
@@ -132,13 +137,13 @@ const Board = () => {
       );
     });
     return () => {
-      socket.off("taskAdded");
-      socket.off("taskUpdated");
-      socket.off("taskDeleted");
+      socketRef.off("taskAdded");
+      socketRef.off("taskUpdated");
+      socketRef.off("taskDeleted");
     };
-  }, [socket]);
+  }, [socketRef]);
 
-  // Handle drag-and-drop reordering/moving tasks between columns
+  // Handle drag-and-drop end event
   const handleDragEnd = useCallback(async (event) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
@@ -146,7 +151,7 @@ const Board = () => {
     let sourceListIndex, sourceCardIndex, destinationListIndex, destinationCardIndex;
     let movedCard = null;
 
-    // Find the source column and card index
+    // Find source list and card index
     lists.forEach((list, li) => {
       const index = list.cards.findIndex(card => card._id === active.id);
       if (index !== -1) {
@@ -156,7 +161,7 @@ const Board = () => {
       }
     });
 
-    // Attempt to find destination column by matching card id
+    // Find destination list and card index
     lists.forEach((list, li) => {
       const index = list.cards.findIndex(card => card._id === over.id);
       if (index !== -1) {
@@ -164,26 +169,22 @@ const Board = () => {
         destinationCardIndex = index;
       }
     });
-
-    // If destination not found, try to get it from droppable container's data
-    if (destinationListIndex === undefined) {
-      const droppableId = over.data?.current?.droppableId;
-      if (droppableId) {
-        destinationListIndex = lists.findIndex(list => list.id === droppableId);
-        destinationCardIndex = lists[destinationListIndex].cards.length;
-      }
+    
+    // If destination column is empty, use droppable container's data
+    if (destinationListIndex === undefined && over.data?.current?.droppableId) {
+      destinationListIndex = lists.findIndex(list => list.id === over.data.current.droppableId);
+      destinationCardIndex = lists[destinationListIndex].cards.length;
     }
-
+    
     let newLists;
     if (sourceListIndex === destinationListIndex) {
-      // Reordering within the same column
+      // Reorder within the same column
       const newCards = arrayMove(lists[sourceListIndex].cards, sourceCardIndex, destinationCardIndex);
       newLists = [...lists];
       newLists[sourceListIndex] = { ...lists[sourceListIndex], cards: newCards };
-      // Update order for tasks in this column (batch update)
       await Promise.all(newCards.map((card, index) => updateTask(card._id, { order: index })));
     } else {
-      // Moving a task from one column to another: update category and order
+      // Move task between columns: update category and order
       const sourceCards = Array.from(lists[sourceListIndex].cards);
       sourceCards.splice(sourceCardIndex, 1);
       const destinationCards = Array.from(lists[destinationListIndex].cards);
@@ -191,7 +192,6 @@ const Board = () => {
       newLists = [...lists];
       newLists[sourceListIndex] = { ...lists[sourceListIndex], cards: sourceCards };
       newLists[destinationListIndex] = { ...lists[destinationListIndex], cards: destinationCards };
-      // Update the moved task's category and order in the database
       await updateTask(movedCard._id, {
         category: lists[destinationListIndex].title,
         order: destinationCardIndex,
@@ -200,11 +200,12 @@ const Board = () => {
     setLists(newLists);
   }, [lists, updateTask]);
 
-  // Only the "To-Do" column shows add task functionality
+  // Show input for adding a new task (only in "To-Do")
   const handleAddTask = useCallback((listId) => {
     setActiveTaskList(listId);
   }, []);
 
+  // Save new task and update UI immediately
   const handleSaveTask = useCallback(async (listId) => {
     if (!newTaskTitle.trim()) return;
     if (newTaskTitle.length > 50) {
@@ -222,11 +223,18 @@ const Board = () => {
       timestamp: new Date().toISOString(),
       category: list.title,
       order: list.cards.length,
-      email: user ? user.email : null,
+      email: user.email,
     };
     try {
-      await createTask(newTask);
-      // Rely on socket "taskAdded" to update state
+      const createdTask = await createTask(newTask);
+      // Update UI immediately without waiting for socket event
+      setLists(prevLists =>
+        prevLists.map(list =>
+          list.title === createdTask.category
+            ? { ...list, cards: [...list.cards, createdTask] }
+            : list
+        )
+      );
       setNewTaskTitle("");
       setNewTaskDescription("");
       setActiveTaskList(null);
@@ -235,6 +243,7 @@ const Board = () => {
     }
   }, [newTaskTitle, newTaskDescription, lists, createTask, user]);
 
+  // Delete task handler
   const handleDeleteTask = useCallback(async (listId, taskId) => {
     try {
       await deleteTask(taskId);

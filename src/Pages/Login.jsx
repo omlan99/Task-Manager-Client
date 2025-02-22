@@ -13,7 +13,7 @@ const Login = () => {
     const email = form.email.value;
     const password = form.password.value;
     signInUser(email, password).then((result) => {
-      console.log(result.user);
+      // console.log(result.user);
       Swal.fire({
         position: "top-end",
         icon: "success",
@@ -26,7 +26,7 @@ const Login = () => {
   };
   const handleClick = () => {
     googleSignIn().then((result) => {
-      console.log(result.user);
+      // console.log(result.user);
       navigate("/")
     });
   };
