@@ -1,20 +1,21 @@
+// /src/Hooks/useAxios.js
 import { useState, useCallback } from 'react';
 import axios from 'axios';
 
-// Create an axios instance with your base URL
 const axiosInstance = axios.create({
-  baseURL: 'http://localhost:3000', // update this if your backend URL differs
+  // baseURL: 'http://localhost:3000', // Adjust as needed
+  baseURL: 'https://task-manager-server-8frn.onrender.com/', 
 });
 
 const useAxios = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // Fetch tasks
-  const getTasks = useCallback(async () => {
+  // Accept an optional query string
+  const getTasks = useCallback(async (query = "") => {
     setLoading(true);
     try {
-      const response = await axiosInstance.get('/tasks');
+      const response = await axiosInstance.get('/tasks' + query);
       setLoading(false);
       return response.data;
     } catch (err) {
@@ -24,7 +25,6 @@ const useAxios = () => {
     }
   }, []);
 
-  // Create a new task
   const createTask = useCallback(async (task) => {
     setLoading(true);
     try {
@@ -38,7 +38,6 @@ const useAxios = () => {
     }
   }, []);
 
-  // Update an existing task
   const updateTask = useCallback(async (id, updatedTask) => {
     setLoading(true);
     try {
@@ -52,7 +51,6 @@ const useAxios = () => {
     }
   }, []);
 
-  // Delete a task
   const deleteTask = useCallback(async (id) => {
     setLoading(true);
     try {

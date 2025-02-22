@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useContext, useCallback } from 'react';
 import { io } from 'socket.io-client';
+import { AuthContext } from '../Context/AuthProvider';
 import {
   DndContext,
   closestCenter,
@@ -15,20 +16,20 @@ import {
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import useAxios from '../Hooks/useAxios'; // Adjust path if needed
+import useAxios from '../Hooks/useAxios';
 
-// Droppable container for each column
+// DroppableContainer: now passes data: { droppableId } so that even empty columns can be identified
 function DroppableContainer({ droppableId, children }) {
-  const { setNodeRef } = useDroppable({ id: droppableId });
+  const { setNodeRef } = useDroppable({ id: droppableId, data: { droppableId } });
   return (
-    <div ref={setNodeRef} data-droppable-id={droppableId} className="min-h-[50px]">
+    <div ref={setNodeRef} className="min-h-[50px]">
       {children}
     </div>
   );
 }
 
-// Draggable Task Card component
-function TaskCard({ task, onDelete }) {
+// TaskCard: memoized to prevent unnecessary re-renders
+const TaskCard = React.memo(function TaskCard({ task, onDelete }) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: task._id });
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -52,34 +53,36 @@ function TaskCard({ task, onDelete }) {
       </button>
     </div>
   );
-}
+});
 
 const Board = () => {
+  const { user } = useContext(AuthContext);
   const { getTasks, createTask, updateTask, deleteTask } = useAxios();
-  const socket = io('http://localhost:3000'); // Adjust URL if needed
+  const socket = io('http://localhost:3000'); // Adjust URL as needed
 
-  // Three default columns by category
+  // Define three default columns by category
   const [lists, setLists] = useState([
     { id: 'list-1', title: "To-Do", cards: [] },
     { id: 'list-2', title: "In Progress", cards: [] },
     { id: 'list-3', title: "Done", cards: [] }
   ]);
 
-  // For adding tasks (only in To-Do column)
+  // State for adding new tasks (only for To-Do column)
   const [activeTaskList, setActiveTaskList] = useState(null);
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [newTaskDescription, setNewTaskDescription] = useState("");
 
-  // Set up dnd-kit sensors
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
   );
 
-  // Fetch tasks on mount and group by category
+  // Fetch tasks on mount and group them by category (filtered by user.email)
   useEffect(() => {
     const fetchData = async () => {
+      if (!user || !user.email) return;
       try {
-        const tasks = await getTasks();
+        // Append email query parameter so the backend returns only this user's tasks
+        const tasks = await getTasks(`?email=${encodeURIComponent(user.email)}`);
         const grouped = { "To-Do": [], "In Progress": [], "Done": [] };
         tasks.forEach(task => {
           if (grouped[task.category]) {
@@ -97,19 +100,19 @@ const Board = () => {
       }
     };
     fetchData();
-  }, [getTasks]);
+  }, [getTasks, user]);
 
   // Listen for real-time updates via Socket.IO
-useEffect(() => {
-  socket.on("taskAdded", (task) => {
-    setLists(prevLists =>
-      prevLists.map(list =>
-        list.title === task.category && !list.cards.some(c => c._id === task._id)
-          ? { ...list, cards: [...list.cards, task] }
-          : list
-      )
-    );
-  });
+  useEffect(() => {
+    socket.on("taskAdded", (task) => {
+      setLists(prevLists =>
+        prevLists.map(list =>
+          list.title === task.category && !list.cards.some(c => c._id === task._id)
+            ? { ...list, cards: [...list.cards, task] }
+            : list
+        )
+      );
+    });
     socket.on("taskUpdated", (updatedTask) => {
       setLists(prevLists =>
         prevLists.map(list => ({
@@ -135,15 +138,15 @@ useEffect(() => {
     };
   }, [socket]);
 
-  // Handle drag-and-drop end event
-  const handleDragEnd = async (event) => {
+  // Handle drag-and-drop reordering/moving tasks between columns
+  const handleDragEnd = useCallback(async (event) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
     let sourceListIndex, sourceCardIndex, destinationListIndex, destinationCardIndex;
     let movedCard = null;
 
-    // Find source list and card index
+    // Find the source column and card index
     lists.forEach((list, li) => {
       const index = list.cards.findIndex(card => card._id === active.id);
       if (index !== -1) {
@@ -153,7 +156,7 @@ useEffect(() => {
       }
     });
 
-    // Try to find destination using card id
+    // Attempt to find destination column by matching card id
     lists.forEach((list, li) => {
       const index = list.cards.findIndex(card => card._id === over.id);
       if (index !== -1) {
@@ -162,24 +165,25 @@ useEffect(() => {
       }
     });
 
-    // If destination column is empty, use droppable container's id
+    // If destination not found, try to get it from droppable container's data
     if (destinationListIndex === undefined) {
-      const droppableId = over.data?.current?.droppableId || over.id;
-      destinationListIndex = lists.findIndex(list => list.id === droppableId);
-      destinationCardIndex = lists[destinationListIndex].cards.length;
+      const droppableId = over.data?.current?.droppableId;
+      if (droppableId) {
+        destinationListIndex = lists.findIndex(list => list.id === droppableId);
+        destinationCardIndex = lists[destinationListIndex].cards.length;
+      }
     }
 
     let newLists;
     if (sourceListIndex === destinationListIndex) {
-      // Reorder within same column
+      // Reordering within the same column
       const newCards = arrayMove(lists[sourceListIndex].cards, sourceCardIndex, destinationCardIndex);
       newLists = [...lists];
       newLists[sourceListIndex] = { ...lists[sourceListIndex], cards: newCards };
-      newCards.forEach(async (card, index) => {
-        await updateTask(card._id, { order: index });
-      });
+      // Update order for tasks in this column (batch update)
+      await Promise.all(newCards.map((card, index) => updateTask(card._id, { order: index })));
     } else {
-      // Moving task between columns: update category and order
+      // Moving a task from one column to another: update category and order
       const sourceCards = Array.from(lists[sourceListIndex].cards);
       sourceCards.splice(sourceCardIndex, 1);
       const destinationCards = Array.from(lists[destinationListIndex].cards);
@@ -187,22 +191,21 @@ useEffect(() => {
       newLists = [...lists];
       newLists[sourceListIndex] = { ...lists[sourceListIndex], cards: sourceCards };
       newLists[destinationListIndex] = { ...lists[destinationListIndex], cards: destinationCards };
-
-      // Update moved task in the database with new category and order
+      // Update the moved task's category and order in the database
       await updateTask(movedCard._id, {
         category: lists[destinationListIndex].title,
-        order: destinationCardIndex
+        order: destinationCardIndex,
       });
     }
     setLists(newLists);
-  };
+  }, [lists, updateTask]);
 
   // Only the "To-Do" column shows add task functionality
-  const handleAddTask = (listId) => {
+  const handleAddTask = useCallback((listId) => {
     setActiveTaskList(listId);
-  };
+  }, []);
 
-  const handleSaveTask = async (listId) => {
+  const handleSaveTask = useCallback(async (listId) => {
     if (!newTaskTitle.trim()) return;
     if (newTaskTitle.length > 50) {
       alert("Task title must be at most 50 characters");
@@ -219,19 +222,20 @@ useEffect(() => {
       timestamp: new Date().toISOString(),
       category: list.title,
       order: list.cards.length,
+      email: user ? user.email : null,
     };
     try {
       await createTask(newTask);
-      // Do NOT update local state here. The socket "taskAdded" event will update state.
+      // Rely on socket "taskAdded" to update state
       setNewTaskTitle("");
       setNewTaskDescription("");
       setActiveTaskList(null);
     } catch (err) {
       console.error(err);
     }
-  };
+  }, [newTaskTitle, newTaskDescription, lists, createTask, user]);
 
-  const handleDeleteTask = async (listId, taskId) => {
+  const handleDeleteTask = useCallback(async (listId, taskId) => {
     try {
       await deleteTask(taskId);
       setLists(prevLists =>
@@ -242,7 +246,7 @@ useEffect(() => {
     } catch (err) {
       console.error(err);
     }
-  };
+  }, [deleteTask]);
 
   return (
     <div className="p-4">
