@@ -258,9 +258,9 @@ const Board = () => {
   }, [deleteTask]);
 
   return (
-    <div className="p-4">
+    <div className="p-4 flex justify-center items-center">
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-        <div className="flex space-x-4 overflow-auto items-start">
+        <div className="grid lg:grid-cols-3 space-x-4 overflow-auto items-start">
           {lists.map(list => (
             <div key={list.id} className="bg-gray-100 rounded-lg p-4 min-w-[200px] flex-shrink-0">
               <h2 className="font-bold mb-2">{list.title}</h2>
